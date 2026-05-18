@@ -1,0 +1,13 @@
+{
+  "stories": [],
+  "deps": {},
+  "blocks": {},
+  "by_status": {
+    "done": [],
+    "draft": [],
+    "in-progress": [],
+    "pending-verification": [],
+    "superseded": []
+  },
+  "by_feature": {}
+}
