@@ -4,6 +4,10 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Bill Split uses the camera to capture a photo of your receipt for item extraction.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Bill Split accesses your photo library so you can choose an existing receipt image.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

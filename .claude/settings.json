@@ -1,4 +1,26 @@
 {
+  "permissions": {
+      "allow": [
+        "Bash(flutter test:*)",
+        "Bash(flutter analyze:*)",
+        "Bash(flutter pub:*)",
+        "Bash(flutter doctor:*)",
+        "Bash(flutter devices:*)",
+        "Bash(flutter emulators:*)",
+        "Bash(flutter run:*)",
+        "Bash(flutter create:*)",
+        "Bash(flutter build:*)",
+        "Bash(flutter clean:*)",
+        "Bash(dart run build_runner:*)",
+        "Bash(python3 scripts/spec/regen-index:*)",
+        "Bash(python3 scripts/spec/hook-router:*)",
+        "Bash(git status:*)",
+        "Bash(git diff:*)",
+        "Bash(git log:*)",
+        "Bash(git branch:*)",
+        "Bash(make:*)"
+      ]
+    },
   "hooks": {
     "PostToolUse": [
       {
