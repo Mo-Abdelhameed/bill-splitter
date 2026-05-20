@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "560404288287",
+    "project_id": "bill-splitter-7e7f5",
+    "storage_bucket": "bill-splitter-7e7f5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:560404288287:android:500216234d6d7cb4dcd62a",
+        "android_client_info": {
+          "package_name": "com.mohamedabdelhamid.bill_split"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDBt1feHmTHioNX2qUQCVXsOTBxhKNFF9k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

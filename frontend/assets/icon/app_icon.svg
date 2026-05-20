@@ -1,0 +1,23 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="a-bg" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#2A6FD2"/>
+      <stop offset="1" stop-color="#163F80"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#a-bg)"/>
+  <g transform="translate(512 540) rotate(-7) translate(-220 -300)">
+    <path d="M0 40 Q0 0 40 0 L400 0 Q440 0 440 40 L440 540 L400 520 L360 545 L320 520 L280 545 L240 520 L200 545 L160 520 L120 545 L80 520 L40 545 L0 525 Z"
+          fill="#F6EFDC"/>
+    <rect x="60" y="56" width="320" height="22" rx="6" fill="#1A1A17"/>
+    <rect x="60" y="120" width="180" height="12" rx="4" fill="#8C8779"/>
+    <rect x="260" y="120" width="120" height="12" rx="4" fill="#8C8779"/>
+    <rect x="60" y="160" width="220" height="12" rx="4" fill="#8C8779"/>
+    <rect x="60" y="200" width="160" height="12" rx="4" fill="#8C8779"/>
+    <rect x="60" y="240" width="200" height="12" rx="4" fill="#8C8779"/>
+  </g>
+  <g>
+    <rect x="-100" y="500" width="1300" height="72" rx="36" fill="#C39A3A" transform="rotate(-22 512 512)"/>
+    <rect x="-100" y="500" width="1300" height="72" rx="36" fill="none" stroke="#FFFFFE" stroke-opacity="0.18" stroke-width="2" transform="rotate(-22 512 512)"/>
+  </g>
+</svg>

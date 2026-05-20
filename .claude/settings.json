@@ -12,26 +12,18 @@
         "Bash(flutter build:*)",
         "Bash(flutter clean:*)",
         "Bash(dart run build_runner:*)",
-        "Bash(python3 scripts/spec/regen-index:*)",
-        "Bash(python3 scripts/spec/hook-router:*)",
+        "Bash(pytest:*)",
+        "Bash(uvicorn:*)",
+        "Bash(python3 -m pytest:*)",
+        "Bash(python3 -m venv:*)",
         "Bash(git status:*)",
         "Bash(git diff:*)",
         "Bash(git log:*)",
         "Bash(git branch:*)",
-        "Bash(make:*)"
+        "Bash(make:*)",
+        "Bash(ls:*)",
+        "Bash(mkdir:*)"
       ]
-    },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/spec/hook-router\""
-          }
-        ]
-      }
-    ]
   }
 }
+
