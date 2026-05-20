@@ -1,67 +1,103 @@
 # Working in this project
 
-This is a Flutter mobile app (iOS + Android) — a bill splitter for Egyptian restaurants — with a stateless Python (FastAPI) backend that proxies image-extraction calls to Gemini 2.5 Flash. Frontend code lives in `frontend/`, backend code in `backend/`. The authoritative project rules live in `.specify/memory/constitution.md`; the active feature plan is referenced at the bottom of this file.
+This project does **spec-driven development**. The spec is not a markdown file — **the spec is a SQLite database** served by the `specs-mcp` MCP server. Every requirement, user story, acceptance scenario, plan decision, API contract, phase, task, and dependency lives as a row in that DB. The DB is the **single source of truth** for what the system should do.
 
-## Spec-driven workflow (spec-kit)
+Before you write a single line of implementation code, you read from the DB. Before you mark anything done, you write to the DB. Markdown is not authoritative anywhere in this project; if you need a `.md` view of the spec, you generate one on demand from the DB.
 
-This project uses [GitHub spec-kit](https://github.com/github/spec-kit) for spec-driven development. The slash-command flow:
+This is a Flutter mobile app (iOS + Android) — a bill splitter for Egyptian restaurants — with a stateless Python (FastAPI) backend that proxies image-extraction to Gemini 2.5 Flash. The app code itself is **not present in this repo yet** — it will be (re)built from the DB via the workflow below.
 
-1. **`/speckit-specify`** — capture the feature in plain English; produces `specs/<NNN-feature>/spec.md`.
-2. **`/speckit-clarify`** — optional pass to ask follow-up questions and tighten ambiguous AC.
-3. **`/speckit-plan`** — derive the technical implementation plan from the spec; produces `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`.
-4. **`/speckit-tasks`** — break the plan into actionable, dependency-ordered tasks; produces `tasks.md`.
-5. **`/speckit-implement`** — execute the tasks in order, marking each `[ ]` → `[x]` as it completes.
+## The specs DB (THE source of truth)
 
-The Constitution (`.specify/memory/constitution.md`) is the project's law; it supersedes any spec-kit default that conflicts with it. See the next section for the most important override.
+**Server:** `specs-mcp` (Python MCP server at `/Users/mo/Desktop/specs-mcp/`, registered in [.mcp.json](.mcp.json)).
 
-## Spec-kit interoperability — Constitution wins
+**File:** `/Users/mo/Desktop/specs-mcp/specs.db` (SQLite).
 
-When invoking ANY spec-kit slash command (`/speckit-specify`, `/speckit-clarify`, `/speckit-plan`, `/speckit-tasks`, `/speckit-implement`, etc.), spec-kit's default rules — including its "make informed guesses based on industry standards" and its "max 3 [NEEDS CLARIFICATION] markers" cap — DO NOT APPLY. They are overridden by the project's Constitution, specifically **Principle IV: Ask, Don't Assume**.
+**Schema:** auto-loaded as the MCP resource `specs-db://schema`. **Read it at the start of every session** before calling any write tool. It tells you every table, column type, enum (`status`, `priority`, `tier`), foreign key, and `unique` constraint. The full DDL is also available at `specs-db://schema.sql`.
 
-Concretely, when running any spec-kit drafting command:
+What lives in the DB (the entire spec, end to end):
 
-1. **Read `.specify/memory/constitution.md` before anything else** in the skill workflow.
-2. For every piece of information that the spec-kit template asks you to fill (User Story, AC, Non-goals, FRs, Success Criteria, Assumptions, etc.): if the user did not explicitly state it in their `/speckit-*` input or in source documents they pointed at, STOP and ask them via `AskUserQuestion` (grouped, ≤4 at a time, batched but never deferred to "keep batches tidy").
-3. **The "max 3 [NEEDS CLARIFICATION] markers" cap is removed.** Use as many as needed.
-4. **After writing the initial draft**, AS A SEPARATE STEP, sweep the document for every line that came from your own guess rather than the user's explicit input, and surface each as a question. This step is automatic, not user-prompted.
-5. If the user explicitly says "use your judgment" / "you decide", record the deferral in the Assumptions or Context section. Silent guesses are forbidden.
+| Table | What it holds | Owning skill |
+|---|---|---|
+| `project`, `constitution_principle` | Project + the project's law (5 principles) | (bootstrap) |
+| `feature` | One row per spec-kit feature (e.g. `001-bill-split-flow`) | `/speckit-specify` |
+| `user_story`, `acceptance_scenario` | User-facing flows + their Given/When/Then proofs | `/speckit-specify` |
+| `functional_requirement`, `success_criterion` | FR-NNN and SC-NNN rules | `/speckit-specify` |
+| `edge_case`, `assumption`, `key_entity` | Failure modes, deliberate deferrals, domain nouns | `/speckit-specify` |
+| `plan` (one row per feature; blob columns `summary`, `technical_context`, `project_structure`, `research`, `data_model`, `quickstart`) | What used to be plan.md / research.md / data-model.md / quickstart.md | `/speckit-plan` |
+| `api_endpoint` | Backend HTTP contract (one row per endpoint) | `/speckit-plan` |
+| `checklist` | Quality checklists scoped to a feature | `/speckit-specify` + `/speckit-plan` |
+| `phase`, `task`, `task_dependency` | The work breakdown — Setup → Foundational → US1 → US2 → US3 → Polish | `/speckit-tasks`, `/speckit-implement` |
 
-Spec-kit's `/speckit-clarify` is still useful as an additional clarification pass after the initial draft, but it is NOT the only place where clarification happens — the ask-first behavior is the rule for every spec-kit drafting command.
+**Core read tools:** `get_feature(slug)`, `list_features()`, `get_constitution(project)`, `list_tasks(feature, …)`, `next_tasks(feature)`, `get_task(code)`, `search(query)`, `grep(pattern)`, `describe_schema(table?)`.
 
-## Flutter-specific conventions (`frontend/`)
+**Core write tools:** `create_project(...)`, `create_feature(...)`, `set_spec(...)`, `set_plan(...)`, `set_tasks(...)`, `update_task(code, …)`, `update_entity(kind, code, fields)`, `add_task_dependency(...)`, `delete_entity(...)`.
 
-- **Test runner**: `flutter test` (full suite) or `flutter test test/path/foo_test.dart` (single file). Run from `frontend/` or use the top-level `make frontend-test` target.
-- **Static analysis**: `flutter analyze` (or `make frontend-analyze`). Zero errors required before any task is marked done.
-- **Source layout**: implementation under `frontend/lib/`, tests under `frontend/test/`. Mirror the directory structure between the two.
-- **State management**: pragmatic — start with in-memory holders injected via constructor. No state-management package is currently in use; introducing one requires an explicit decision recorded in a spec.
-- **Theme**: Material 3 with `ColorScheme.fromSeed(seedColor: 0xFF1976D2)` (royal blue) and surface override `0xFFFAF8F4` (off-white). See `frontend/lib/theme.dart`.
-- **Test naming**: `FR-NNN: <description>` where `FR-NNN` maps to a Functional Requirement in the active feature's `spec.md`.
+**Export tools** (on-demand markdown view, NEVER the source of truth): `export_feature_to_md(feature, output_dir)`, `export_project_to_md(project, output_path?)`.
 
-## Backend-specific conventions (`backend/`)
+### Rules — non-negotiable
 
-- **Test runner**: `pytest` from `backend/` (or `make backend-test`).
-- **Local run**: `uvicorn app.main:app --reload --port 8080` (or `make backend-run`). Needs a real `GEMINI_API_KEY` and `FIREBASE_PROJECT_ID` in `backend/.env`.
-- **Source layout**: `backend/app/{routes, services, models, auth}/`; tests under `backend/tests/`.
-- **Non-negotiable security rules** (Constitution v1.1.0):
+1. **Read the DB before doing anything.** Never assume what a feature contains; always call `get_feature(...)` first. Never assume what the constitution says; always call `get_constitution(project='bill-splitter')` first.
+2. **Every write goes through an MCP tool.** Never edit `.db` directly. Never edit a generated `.md` file expecting the DB to follow — the DB doesn't watch the filesystem.
+3. **No markdown spec exists.** If you find yourself looking for `spec.md`, `plan.md`, `tasks.md`, `research.md`, `data-model.md`, `quickstart.md`, or `contracts/*.md`, **stop** — those files do not exist in this project and finding any such file means it's stale leftover, not the spec. The spec is the DB.
+4. **Schema awareness before writes.** Before any `set_spec`/`set_plan`/`set_tasks`/`update_entity` call, consult `specs-db://schema` (or call `describe_schema(table)`) to confirm field names, enum values, and required columns. Passing an unknown field or a non-enum status value will be rejected by a CHECK constraint.
+5. **Clarifications resolve BEFORE the DB write, not after.** There is no "NEEDS CLARIFICATION" marker in any row. If a piece of info is missing, you `AskUserQuestion` until you have the answer, then write. See Principle IV below.
+
+## Spec-driven workflow (the 4 slash commands)
+
+Each command is a thin layer over the MCP tools. Every command writes to the DB; none write `.md` files.
+
+1. **`/speckit-specify <description>`** — capture a new feature.
+   - `list_features()` → pick next `sequence_number`.
+   - `create_feature(...)` → empty `feature` row.
+   - `AskUserQuestion` rounds to gather user_stories, FRs, edge_cases, SCs, assumptions, key_entities.
+   - `set_spec(...)` → all spec rows in one batched call.
+   - `set_plan(checklists=[{slug:'requirements', ...}])` → the spec-quality checklist.
+
+2. **`/speckit-plan`** — derive the implementation plan.
+   - `get_feature(slug, sections=['spec'])` + `get_constitution(project='bill-splitter')` for context.
+   - `AskUserQuestion` rounds for each plan section the user hasn't already stated.
+   - `set_plan(summary=..., technical_context=..., project_structure=..., research=..., data_model=..., quickstart=..., api_endpoints=[...], checklists=[...])`.
+   - `update_entity(kind='feature', code_or_id=<slug>, fields={'status': 'planned'})`.
+
+3. **`/speckit-tasks`** — break the plan into tasks.
+   - `get_feature(slug)` to pull spec + plan + contracts.
+   - `set_tasks(phases=[...], tasks=[...], dependencies=[...])`.
+   - `next_tasks(feature)` to sanity-check that Setup has at least one ready-to-start task.
+
+4. **`/speckit-implement`** — execute the work.
+   - `list_features()` → pick `planned` feature.
+   - `get_feature(slug)` + `get_constitution(project)` for context.
+   - Loop: `next_tasks(feature)` → mark task `in_progress` via `update_task(code, status='in_progress')` → write code → tests pass → `update_task(code, status='done')`.
+   - At the end: `update_entity(kind='feature', code_or_id=<slug>, fields={'status': 'done'})`.
+
+## Principle IV: Ask, Don't Assume
+
+The constitution (read it from the DB via `get_constitution`) names this as a **NON-NEGOTIABLE** principle. Concretely:
+
+- Every line that lands in the DB must trace to something the user explicitly said. If a gap exists, STOP and `AskUserQuestion` (grouped, ≤4 at a time, batched but never deferred).
+- Spec-kit's "make informed guesses based on industry standards" and "max 3 [NEEDS CLARIFICATION] markers" defaults **do NOT apply** here. There is no marker cap; there are no markers at all — clarifications are resolved synchronously via `AskUserQuestion` before the row is written.
+- If the user explicitly says "use your judgment" / "you decide", record the deferral as an `assumption` row (e.g., `"User deferred to AI judgment for X (2026-05-20)"`). Silent guesses are forbidden.
+
+## Implementation conventions (for the rebuild)
+
+The Flutter + FastAPI scaffold was deleted in commit `9ff6957` and will be rebuilt from the DB. These conventions are guardrails for that rebuild — they're not separate sources of truth, just consistent defaults:
+
+- **Frontend**: Flutter stable, Dart 3.x. Target iOS 13+ and Android API 23+. Material 3 with `ColorScheme.fromSeed(seedColor: 0xFF1976D2)` (royal blue), surface override `0xFFFAF8F4` (warm off-white). Routing via `go_router`. HTTP via `dio`.
+- **Backend**: Python 3.12+, FastAPI, uvicorn, pytest. Stateless — no DB on the backend side. Deployed to Cloud Run free tier.
+- **Egypt locale defaults**: EGP currency, 12% service charge, 14% VAT — overridable per bill.
+- **Test naming**: `FR-NNN: <description>` where `FR-NNN` is a `functional_requirement.code` from the DB.
+- **Non-negotiable security rules** (from `constitution_principle` rows — verify by reading them):
   - `GEMINI_API_KEY` lives ONLY in the backend environment; NEVER in the Flutter app build.
   - Every app → backend request carries a Firebase Anonymous Auth ID token, verified server-side via `firebase-admin`.
 
-## Build & run shortcuts
-
-The top-level `Makefile` delegates to `frontend/` and `backend/`:
-
-| Target | What it does |
-|---|---|
-| `make test` | `flutter test` + `pytest` |
-| `make analyze` | `flutter analyze` |
-| `make frontend-run-ios` | Run the app on the iPhone simulator |
-| `make frontend-run-android` | Run the app on the Android emulator |
-| `make backend-run` | uvicorn locally on http://localhost:8080 |
-| `make backend-test` | pytest |
-| `make backend-install` | One-time backend venv setup |
+When the implementation tasks land via `/speckit-implement`, the file paths the tasks reference become the new `frontend/` and `backend/` directories.
 
 <!-- SPECKIT START -->
-**Active spec-kit feature plan**: [`specs/001-bill-split-flow/plan.md`](specs/001-bill-split-flow/plan.md)
+**Active feature**: `001-bill-split-flow` — once the DB is repopulated, fetch its full state with:
 
-For technologies, project structure, shell commands, and other implementation context for the current feature, read the plan above (and the sibling `research.md`, `data-model.md`, `quickstart.md`, `contracts/` files in the same directory). The plan is the authoritative source for tech choices for this feature; the constitution (`.specify/memory/constitution.md`) is authoritative for project-wide rules.
+```
+mcp__specs-mcp__get_feature(feature='001-bill-split-flow')
+```
+
+That single call returns the feature row, every user story (with acceptance scenarios nested), every FR/edge case/SC/assumption/key entity, the plan blob columns, every API endpoint, every phase/task/dependency, and every checklist. **It is your authoritative read for everything about this feature.** Do not look for sibling `.md` files — there are none.
 <!-- SPECKIT END -->
