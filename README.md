@@ -9,6 +9,31 @@ The app is two tiers:
 
 Every backend request is authenticated with a Firebase Anonymous Auth ID token.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/people.png" width="240"></td>
+    <td><img src="docs/screenshots/take-photo.png" width="240"></td>
+    <td><img src="docs/screenshots/invoice.png" width="240"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>1. Add people</b></td>
+    <td align="center"><b>2. Snap or pick a receipt</b></td>
+    <td align="center"><b>3. Confirm the photo</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/items.png" width="240"></td>
+    <td><img src="docs/screenshots/assign-people-items.png" width="240"></td>
+    <td><img src="docs/screenshots/final-split.png" width="240"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>4. Items found</b></td>
+    <td align="center"><b>5. Assign names → items</b></td>
+    <td align="center"><b>6. Per-person totals</b></td>
+  </tr>
+</table>
+
 ## Why two tiers?
 
 The Gemini API key cannot ship in a mobile build (anyone with the IPA / APK could lift it and burn through the quota). The backend holds the key, the app holds nothing but a Firebase ID token. The backend is stateless — no database, no per-user storage — so it scales-to-zero comfortably on Cloud Run's free tier.
