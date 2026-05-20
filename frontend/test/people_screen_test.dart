@@ -30,19 +30,21 @@ void main() {
     final captured = <List<Person>>[];
     await tester.pumpWidget(_wrap(PeopleScreen(onProceed: captured.add)));
 
-    // Zero people: Next is disabled.
     final nextFinder = find.byKey(const Key('people-next-button'));
-    expect(tester.widget<ElevatedButton>(nextFinder).onPressed, isNull);
 
-    // One person: still disabled.
+    // Zero people: tapping Next should not fire onProceed.
+    await tester.tap(nextFinder, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(captured, isEmpty);
+
+    // One person: still no callback.
     await _addPerson(tester, 'Mo');
-    expect(tester.widget<ElevatedButton>(nextFinder).onPressed, isNull);
+    await tester.tap(nextFinder, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(captured, isEmpty);
 
-    // Two people: enabled.
+    // Two people: callback fires with the list.
     await _addPerson(tester, 'Sara');
-    expect(tester.widget<ElevatedButton>(nextFinder).onPressed, isNotNull);
-
-    // Tapping Next forwards the people list.
     await tester.tap(nextFinder);
     await tester.pumpAndSettle();
     expect(captured, hasLength(1));
@@ -50,17 +52,18 @@ void main() {
   });
 
   testWidgets('FR-001: removing a person below 2 re-disables Next', (tester) async {
-    await tester.pumpWidget(_wrap(PeopleScreen(onProceed: (_) {})));
+    final captured = <List<Person>>[];
+    await tester.pumpWidget(_wrap(PeopleScreen(onProceed: captured.add)));
 
     await _addPerson(tester, 'A');
     await _addPerson(tester, 'B');
 
-    final nextFinder = find.byKey(const Key('people-next-button'));
-    expect(tester.widget<ElevatedButton>(nextFinder).onPressed, isNotNull);
-
-    // Remove the first person -> back to 1 -> Next disabled.
+    // Remove the first person -> back to 1 -> Next must not fire.
     await tester.tap(find.byKey(const Key('remove-person-0')));
     await tester.pumpAndSettle();
-    expect(tester.widget<ElevatedButton>(nextFinder).onPressed, isNull);
+
+    await tester.tap(find.byKey(const Key('people-next-button')), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(captured, isEmpty);
   });
 }

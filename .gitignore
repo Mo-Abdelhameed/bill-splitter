@@ -79,3 +79,4 @@ backend/*firebase-adminsdk*.json
 bill-splitter-7e7f5-firebase-adminsdk-fbsvc-dc83854618.json
 
 .venv
+ui
