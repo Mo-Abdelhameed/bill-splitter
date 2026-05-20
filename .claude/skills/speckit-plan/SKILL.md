@@ -56,20 +56,76 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
-1. **Setup**: Run `.specify/scripts/bash/setup-plan.sh --json` from repo root and parse JSON for FEATURE_SPEC, IMPL_PLAN, SPECS_DIR, BRANCH. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
+> **Storage model (this project): DB-first.** Plan content is written to the `specs.db` database via the **`specs-mcp`** MCP server. No `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, or `contracts/*.md` file is produced — they all become blob columns on the `plan` row (and rows in `api_endpoint`).
+>
+> **Prerequisite tools (on `specs-mcp`):** `get_feature`, `set_plan`, `update_entity`, `get_constitution`, `describe_schema`.
+>
+> **Schema reference:** consult the resource `specs-db://schema` for exact field shapes on `plan`, `api_endpoint`, and `checklist`.
 
-2. **Load context**: Read FEATURE_SPEC and `.specify/memory/constitution.md`. Load IMPL_PLAN template (already copied).
+1. **Identify the active feature**:
+   - If `$ARGUMENTS` contains a slug (e.g. `001-bill-split-flow`), use it.
+   - Otherwise call `mcp__specs-mcp__list_features()` and pick the most recently created `draft`/`planned` feature. If ambiguous, ask via `AskUserQuestion`.
 
-3. **Execute plan workflow**: Follow the structure in IMPL_PLAN template to:
-   - Fill Technical Context (mark unknowns as "NEEDS CLARIFICATION")
-   - Fill Constitution Check section from constitution
-   - Evaluate gates (ERROR if violations unjustified)
-   - Phase 0: Generate research.md (resolve all NEEDS CLARIFICATION)
-   - Phase 1: Generate data-model.md, contracts/, quickstart.md
-   - Phase 1: Update agent context by running the agent script
-   - Re-evaluate Constitution Check post-design
+2. **Load context**:
+   - `mcp__specs-mcp__get_feature(feature=<slug>, sections=['spec'])` — pulls the spec content the plan will reference.
+   - `mcp__specs-mcp__get_constitution(project=<project_slug>)` — pulls the constitution body + every principle. The constitution is the project's law; treat its rules as **non-negotiable** when planning.
 
-4. **Stop and report**: Command ends after Phase 2 planning. Report branch, IMPL_PLAN path, and generated artifacts.
+3. **Fill the plan content** by asking the user (`AskUserQuestion`, grouped, ≤4 at a time) for every section. Constitution Principle IV forbids silent defaults. Use as many questions as needed.
+
+   The `plan` row has these markdown-blob columns (all optional, all flat text — section headers go INSIDE the blob, no nested tables):
+
+   | column | spec-kit equivalent | what goes here |
+   |---|---|---|
+   | `summary` | plan.md > Summary | 1-paragraph overview of the technical approach |
+   | `technical_context` | plan.md > Technical Context | bulleted Language/Version, Primary Dependencies, Storage, Testing, Target Platform, Performance Goals, Constraints, Scale/Scope |
+   | `project_structure` | plan.md > Project Structure | the directory tree(s) the implementation will create |
+   | `research` | research.md (Phase 0) | numbered decisions (R-1, R-2, ...) with Decision / Rationale / Alternatives considered |
+   | `data_model` | data-model.md (Phase 1) | entities, fields, validation rules, state transitions |
+   | `quickstart` | quickstart.md (Phase 1) | how to run locally — prereqs, commands per tier |
+
+   Sibling rows the plan also produces:
+   - `api_endpoint` rows (one per HTTP endpoint the backend will expose) — fields per `specs-db://schema`.
+   - `checklist` rows for any plan-phase quality checks.
+
+4. **Run the Constitution Check** mentally:
+   - For each principle returned by `get_constitution`, decide PASS / CONDITIONAL / FAIL and write a one-sentence note.
+   - Include this evaluation as a section inside the `technical_context` or `summary` blob (since we dropped the structured `constitution_check` table). Format as a small markdown table.
+   - If any FAIL, surface it to the user via `AskUserQuestion` before proceeding — Principle I (Spec-Driven Development) is non-negotiable, so the user must explicitly waive or change scope.
+
+5. **Write the plan** in one call (only include fields the user actually answered; omit others — they stay NULL):
+   ```
+   mcp__specs-mcp__set_plan(
+     feature='<slug>',
+     summary='<markdown>',
+     technical_context='<markdown>',
+     project_structure='<markdown>',
+     research='<markdown>',
+     data_model='<markdown>',
+     quickstart='<markdown>',
+     api_endpoints=[
+       {
+         method: 'POST', path: '/v1/extract',
+         description: '...', auth_required: true,
+         request_spec: '<markdown>', success_spec: '<markdown>',
+         error_mapping: '<markdown — HTTP status → error code table>'
+       },
+       ...
+     ],
+     checklists=[ {slug: '...', title: '...', purpose: '...', items: '<markdown>'} ]
+   )
+   ```
+
+6. **Re-evaluate the constitution check** after the plan is in. If a decision in `research` or `data_model` changed the picture, update the embedded check via `mcp__specs-mcp__update_entity(kind='plan', code_or_id=<slug>, fields={'technical_context': '<updated markdown>'})`.
+
+7. **Update the `feature.status`** to `'planned'` via `update_entity(kind='feature', code_or_id='<slug>', fields={'status': 'planned'})`.
+
+8. **Stop and report**: Command ends after the plan is written. Report:
+   - `feature_slug`
+   - which `plan` columns were populated (summary, technical_context, ...)
+   - count of `api_endpoint` rows
+   - count of `checklist` rows
+   - Constitution check summary (PASS/CONDITIONAL/FAIL per principle)
+   - Readiness for `/speckit-tasks`
 
 5. **Check for extension hooks**: After reporting, check if `.specify/extensions.yml` exists in the project root.
    - If it exists, read it and look for entries under the `hooks.after_plan` key
@@ -101,52 +157,47 @@ You **MUST** consider the user input before proceeding (if not empty).
        ```
    - If no hooks are registered or `.specify/extensions.yml` does not exist, skip silently
 
-## Phases
+## Phases (logical, written into `plan` blob columns)
 
-### Phase 0: Outline & Research
+There are no separate `phase 0` / `phase 1` files anymore — all phase outputs become columns on the single `plan` row.
 
-1. **Extract unknowns from Technical Context** above:
-   - For each NEEDS CLARIFICATION → research task
-   - For each dependency → best practices task
-   - For each integration → patterns task
+### Phase 0: Outline & Research → `plan.research`
 
-2. **Generate and dispatch research agents**:
+1. **Identify unknowns** in the user's technical answers (collected via `AskUserQuestion` in step 3 of the Outline above): unfamiliar dependencies, integration patterns, runtime/deployment choices.
+2. For each unknown, gather a decision by **asking the user explicitly** (Constitution Principle IV — no silent guessing). For technology choices, offer the user 2-3 options via `AskUserQuestion` with implications.
+3. **Write the findings into `plan.research`** using the format:
 
-   ```text
-   For each unknown in Technical Context:
-     Task: "Research {unknown} for {feature context}"
-   For each technology choice:
-     Task: "Find best practices for {tech} in {domain}"
+   ```markdown
+   ## R-1: <decision topic>
+
+   - **Decision**: <what was chosen>
+   - **Rationale**: <why; trace to a user answer + date>
+   - **Alternatives considered**:
+     - <name>: rejected because <reason>
+     - <name>: rejected because <reason>
    ```
 
-3. **Consolidate findings** in `research.md` using format:
-   - Decision: [what was chosen]
-   - Rationale: [why chosen]
-   - Alternatives considered: [what else evaluated]
+   Numbered `R-1`, `R-2`, … in the order the questions were asked. Quote the user's exact words in the rationale.
 
-**Output**: research.md with all NEEDS CLARIFICATION resolved
+### Phase 1: Design & Contracts → `plan.data_model` + `api_endpoint` rows + `plan.quickstart`
 
-### Phase 1: Design & Contracts
+1. **Extract entities** → `plan.data_model` blob:
+   - Per entity (BillState, Person, Item, etc.): a small markdown table of fields with type + notes.
+   - Validation rules section (traces each rule back to an FR-NNN).
+   - State transitions section (per screen / per entity).
 
-**Prerequisites:** `research.md` complete
+2. **Define HTTP contracts** (if backend exposes any) → one `api_endpoint` row per endpoint, via the `api_endpoints` array in `set_plan`:
+   - `method`, `path`, `description`, `auth_required`.
+   - `request_spec` and `success_spec` as markdown.
+   - `error_mapping` as a markdown table of HTTP status → error code → cause.
 
-1. **Extract entities from feature spec** → `data-model.md`:
-   - Entity name, fields, relationships
-   - Validation rules from requirements
-   - State transitions if applicable
+3. **Quickstart** → `plan.quickstart` blob: prereqs, env vars, commands to run each tier locally, smoke-test invocations.
 
-2. **Define interface contracts** (if project has external interfaces) → `/contracts/`:
-   - Identify what interfaces the project exposes to users or other systems
-   - Document the contract format appropriate for the project type
-   - Examples: public APIs for libraries, command schemas for CLI tools, endpoints for web services, grammars for parsers, UI contracts for applications
-   - Skip if project is purely internal (build scripts, one-off tools, etc.)
-
-3. **Agent context update**:
-   - Update the plan reference between the `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` markers in `CLAUDE.md` to point to the plan file created in step 1 (the IMPL_PLAN path)
-
-**Output**: data-model.md, /contracts/*, quickstart.md, updated agent context file
+4. **Agent context update**: Update the plan reference between the `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` markers in `CLAUDE.md` to point to the active feature in the DB (e.g., `specs-db: feature slug '001-bill-split-flow'`). No file path is generated.
 
 ## Key rules
 
-- Use absolute paths for filesystem operations; use project-relative paths for references in documentation and agent context files
+- The DB row is the source of truth. Don't produce `plan.md` / `research.md` / `data-model.md` / `quickstart.md` files. If a markdown export is needed for human review, call `mcp__specs-mcp__export_feature_to_md`.
+- Refer to `specs-db://schema` for exact field shapes before each `set_plan` call.
+- Every decision must trace to a user answer captured via `AskUserQuestion`. Silent defaults are forbidden.
 - ERROR on gate failures or unresolved clarifications

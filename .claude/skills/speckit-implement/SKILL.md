@@ -56,47 +56,44 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
-1. Run `.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks` from repo root and parse FEATURE_DIR and AVAILABLE_DOCS list. All paths must be absolute. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
+> **Storage model (this project): DB-first.** Tasks live in the `specs.db` database, not in `tasks.md`. The agent reads tasks via the `specs-mcp` MCP server, executes the actual code changes in the filesystem, then marks each task `done` via `update_task`.
+>
+> **Prerequisite tools (on `specs-mcp`):** `get_feature`, `list_tasks`, `next_tasks`, `get_task`, `update_task`, `get_constitution`.
 
-2. **Check checklists status** (if FEATURE_DIR/checklists/ exists):
-   - Scan all checklist files in the checklists/ directory
-   - For each checklist, count:
-     - Total items: All lines matching `- [ ]` or `- [X]` or `- [x]`
-     - Completed items: Lines matching `- [X]` or `- [x]`
-     - Incomplete items: Lines matching `- [ ]`
-   - Create a status table:
+1. **Identify the active feature**:
+   - If `$ARGUMENTS` contains a slug, use it.
+   - Otherwise call `mcp__specs-mcp__list_features()` and pick the most recently `planned`/`in_progress` feature. If ambiguous, ask via `AskUserQuestion`.
+   - Fail fast if the feature has no tasks yet (`list_tasks` returns empty): tell the user to run `/speckit-tasks` first.
+
+2. **Check checklist status** (from the `checklist` rows on the feature):
+   - Call `mcp__specs-mcp__get_feature(feature=<slug>, sections=['checklists'])`.
+   - For each checklist row, parse `items` (markdown) and count `- [ ]` (incomplete) vs `- [x]`/`- [X]` (complete).
+   - Build a status table:
 
      ```text
-     | Checklist | Total | Completed | Incomplete | Status |
-     |-----------|-------|-----------|------------|--------|
-     | ux.md     | 12    | 12        | 0          | ✓ PASS |
-     | test.md   | 8     | 5         | 3          | ✗ FAIL |
-     | security.md | 6   | 6         | 0          | ✓ PASS |
+     | Checklist        | Total | Completed | Incomplete | Status |
+     |------------------|-------|-----------|------------|--------|
+     | requirements     | 12    | 12        | 0          | ✓ PASS |
+     | ux               | 8     |  5        | 3          | ✗ FAIL |
      ```
 
-   - Calculate overall status:
-     - **PASS**: All checklists have 0 incomplete items
-     - **FAIL**: One or more checklists have incomplete items
+   - **PASS**: all checklists complete → proceed automatically.
+   - **FAIL**: any checklist has incomplete items → STOP and ask the user via `AskUserQuestion` whether to proceed anyway. Halt if no.
 
-   - **If any checklist is incomplete**:
-     - Display the table with incomplete item counts
-     - **STOP** and ask: "Some checklists are incomplete. Do you want to proceed with implementation anyway? (yes/no)"
-     - Wait for user response before continuing
-     - If user says "no" or "wait" or "stop", halt execution
-     - If user says "yes" or "proceed" or "continue", proceed to step 3
-
-   - **If all checklists are complete**:
-     - Display the table showing all checklists passed
-     - Automatically proceed to step 3
-
-3. Load and analyze the implementation context:
-   - **REQUIRED**: Read tasks.md for the complete task list and execution plan
-   - **REQUIRED**: Read plan.md for tech stack, architecture, and file structure
-   - **IF EXISTS**: Read data-model.md for entities and relationships
-   - **IF EXISTS**: Read contracts/ for API specifications and test requirements
-   - **IF EXISTS**: Read research.md for technical decisions and constraints
-   - **IF EXISTS**: Read .specify/memory/constitution.md for governance constraints
-   - **IF EXISTS**: Read quickstart.md for integration scenarios
+3. **Load implementation context** from the DB (single `get_feature` call):
+   ```
+   mcp__specs-mcp__get_feature(feature='<slug>')   # returns spec + plan + contracts + tasks + checklists
+   ```
+   Plus the constitution:
+   ```
+   mcp__specs-mcp__get_constitution(project='<project_slug>')
+   ```
+   Extract:
+   - **Tasks** (`response['tasks']`, `response['phases']`, `response['task_dependencies']`) — the execution plan.
+   - **Plan blobs** (`response['plan']['technical_context']`, `['project_structure']`, `['data_model']`, `['quickstart']`) — tech stack, file layout, entities, smoke tests.
+   - **API endpoints** (`response['api_endpoints']`) — contracts the implementation must match.
+   - **FRs / user stories / ACs / edge cases** — the behavioral target.
+   - **Constitution principles** — non-negotiable rules.
 
 4. **Project Setup Verification**:
    - **REQUIRED**: Create/verify ignore files based on actual project setup:
@@ -142,42 +139,60 @@ You **MUST** consider the user input before proceeding (if not empty).
    - **Terraform**: `.terraform/`, `*.tfstate*`, `*.tfvars`, `.terraform.lock.hcl`
    - **Kubernetes/k8s**: `*.secret.yaml`, `secrets/`, `.kube/`, `kubeconfig*`, `*.key`, `*.crt`
 
-5. Parse tasks.md structure and extract:
-   - **Task phases**: Setup, Tests, Core, Integration, Polish
-   - **Task dependencies**: Sequential vs parallel execution rules
-   - **Task details**: ID, description, file paths, parallel markers [P]
-   - **Execution flow**: Order and dependency requirements
+5. **Mark the feature in-progress** (so cross-cutting reports reflect it):
+   ```
+   mcp__specs-mcp__update_entity(kind='feature', code_or_id='<slug>',
+                                  fields={'status': 'in_progress'})
+   ```
 
-6. Execute implementation following the task plan:
-   - **Phase-by-phase execution**: Complete each phase before moving to the next
-   - **Respect dependencies**: Run sequential tasks in order, parallel tasks [P] can run together  
-   - **Follow TDD approach**: Execute test tasks before their corresponding implementation tasks
-   - **File-based coordination**: Tasks affecting the same files must run sequentially
-   - **Validation checkpoints**: Verify each phase completion before proceeding
+6. **Pull the work queue** in dependency order. The MCP knows the dependency edges:
+   ```
+   mcp__specs-mcp__next_tasks(feature='<slug>', limit=50)   # ready-to-start
+   mcp__specs-mcp__list_tasks(feature='<slug>', status='pending')   # everything left
+   ```
+   `next_tasks` returns only tasks whose `task_dependency` edges all point to `done` tasks. Use this as the iteration unit.
 
-7. Implementation execution rules:
-   - **Setup first**: Initialize project structure, dependencies, configuration
-   - **Tests before code**: If you need to write tests for contracts, entities, and integration scenarios
-   - **Core development**: Implement models, services, CLI commands, endpoints
-   - **Integration work**: Database connections, middleware, logging, external services
-   - **Polish and validation**: Unit tests, performance optimization, documentation
+7. **Execute implementation** following the task plan:
+   - **Phase-by-phase**: complete each phase before moving to the next. Phases are read from `response['phases']`; tasks carry `phase_id`.
+   - **Respect dependencies**: only work on tasks returned by `next_tasks`. As each task completes, more become eligible.
+   - **TDD**: tests first (Constitution Principle II is non-negotiable). The task graph should already encode test-before-impl ordering — if you find an impl task without a preceding test task, STOP and ask the user.
+   - **File-based coordination**: tasks touching the same file paths must run sequentially. The `parallelizable` flag from the task row is a hint; verify by inspecting the file paths in `description`.
+   - **Mark `in_progress`** when you start a task:
+     ```
+     mcp__specs-mcp__update_task(code='T037', status='in_progress')
+     ```
+   - **Mark `done`** when finished:
+     ```
+     mcp__specs-mcp__update_task(code='T037', status='done',
+                                  notes='<optional addendum>')
+     ```
+     `update_task` auto-sets `completed_at` when status flips to `done`.
 
-8. Progress tracking and error handling:
-   - Report progress after each completed task
-   - Halt execution if any non-parallel task fails
-   - For parallel tasks [P], continue with successful tasks, report failed ones
-   - Provide clear error messages with context for debugging
-   - Suggest next steps if implementation cannot proceed
-   - **IMPORTANT** For completed tasks, make sure to mark the task off as [X] in the tasks file.
+8. **Implementation execution rules**:
+   - **Setup first**: initialize project structure, dependencies, configuration.
+   - **Tests before code**: write failing tests for ACs, FRs, contracts, then implement until green.
+   - **Core development**: models, services, screens/endpoints per the task descriptions.
+   - **Integration work**: backend wiring, auth, logging, external services.
+   - **Polish and validation**: regression tests, performance, docs.
 
-9. Completion validation:
-   - Verify all required tasks are completed
-   - Check that implemented features match the original specification
-   - Validate that tests pass and coverage meets requirements
-   - Confirm the implementation follows the technical plan
-   - Report final status with summary of completed work
+9. **Progress tracking and error handling**:
+   - Report progress after each completed task (the agent's text output; the DB also records `completed_at`).
+   - Halt execution if any non-parallel task fails — and leave the task `in_progress` (or set to `skipped` if abandoning) so resumption is clean.
+   - For parallel tasks, continue with successful ones, mark failures explicitly via `update_task(status='skipped', notes='reason')`.
+   - Provide clear error messages with context.
 
-Note: This command assumes a complete task breakdown exists in tasks.md. If tasks are incomplete or missing, suggest running `/speckit-tasks` first to regenerate the task list.
+10. **Completion validation**:
+    - Run `mcp__specs-mcp__list_tasks(feature='<slug>', status='pending')` — should be empty.
+    - Verify implemented features match the spec by spot-checking FRs against code (use `mcp__specs-mcp__search('<fr-code>')` to find the relevant task/code).
+    - Tests pass and coverage meets the constitution's requirements.
+    - Mark the feature `done`:
+      ```
+      mcp__specs-mcp__update_entity(kind='feature', code_or_id='<slug>',
+                                     fields={'status': 'done'})
+      ```
+    - Report final summary: tasks done / skipped / superseded, plus duration.
+
+Note: This command assumes a complete task graph exists in the DB. If `list_tasks` returns empty, run `/speckit-tasks` first.
 
 10. **Check for extension hooks**: After completion validation, check if `.specify/extensions.yml` exists in the project root.
     - If it exists, read it and look for entries under the `hooks.after_implement` key

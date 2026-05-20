@@ -56,44 +56,76 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
-1. **Setup**: Run `.specify/scripts/bash/setup-tasks.sh --json` from repo root and parse FEATURE_DIR, TASKS_TEMPLATE, and AVAILABLE_DOCS list. `FEATURE_DIR` and `TASKS_TEMPLATE` must be absolute paths when provided. `AVAILABLE_DOCS` is a list of document names/relative paths available under `FEATURE_DIR` (for example `research.md` or `contracts/`). For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
+> **Storage model (this project): DB-first.** Phase/task content is written to the `specs.db` database via the **`specs-mcp`** MCP server. No `tasks.md` file is produced — phases become `phase` rows, tasks become `task` rows, and edges become `task_dependency` rows.
+>
+> **Prerequisite tools (on `specs-mcp`):** `get_feature`, `set_tasks`, `list_tasks`, `update_entity`, `describe_schema`.
+>
+> **Schema reference:** consult the resource `specs-db://schema` for `phase`, `task`, `task_dependency` field shapes (especially status enums and the `[P]` parallelizable flag).
 
-2. **Load design documents**: Read from FEATURE_DIR:
-   - **Required**: plan.md (tech stack, libraries, structure), spec.md (user stories with priorities)
-   - **Optional**: data-model.md (entities), contracts/ (interface contracts), research.md (decisions), quickstart.md (test scenarios)
-   - Note: Not all projects have all documents. Generate tasks based on what's available.
+1. **Identify the active feature**:
+   - If `$ARGUMENTS` contains a slug, use it.
+   - Otherwise call `mcp__specs-mcp__list_features()` and pick the most recently `planned` feature. If ambiguous, ask via `AskUserQuestion`.
 
-3. **Execute task generation workflow**:
-   - Load plan.md and extract tech stack, libraries, project structure
-   - Load spec.md and extract user stories with their priorities (P1, P2, P3, etc.)
-   - If data-model.md exists: Extract entities and map to user stories
-   - If contracts/ exists: Map interface contracts to user stories
-   - If research.md exists: Extract decisions for setup tasks
-   - Generate tasks organized by user story (see Task Generation Rules below)
-   - Generate dependency graph showing user story completion order
-   - Create parallel execution examples per user story
-   - Validate task completeness (each user story has all needed tasks, independently testable)
+2. **Load all design context** from the DB:
+   - `mcp__specs-mcp__get_feature(feature=<slug>)` — returns the feature + user_stories + acceptance_scenarios + edge_cases + FRs + SCs + assumptions + key_entities + plan blobs + api_endpoints + existing tasks (if any).
+   - From the response, extract:
+     - User stories with priorities (P1, P2, ...) → drive the phase structure
+     - FRs → drive task content
+     - `plan.technical_context` + `plan.project_structure` → tech stack and file layout
+     - `plan.data_model` → entities and validation rules
+     - `api_endpoint` rows → contract test tasks
+     - `plan.research` → setup tasks
+     - `plan.quickstart` → smoke-test tasks
+   - If the feature has no `plan` row yet (`get_feature` returns `plan=null`), STOP and tell the user to run `/speckit-plan` first.
 
-4. **Generate tasks.md**: Read the tasks template from TASKS_TEMPLATE (from the JSON output above) and use it as structure. If TASKS_TEMPLATE is empty, fall back to `.specify/templates/tasks-template.md`. Fill with:
-   - Correct feature name from plan.md
-   - Phase 1: Setup tasks (project initialization)
-   - Phase 2: Foundational tasks (blocking prerequisites for all user stories)
-   - Phase 3+: One phase per user story (in priority order from spec.md)
-   - Each phase includes: story goal, independent test criteria, tests (if requested), implementation tasks
-   - Final Phase: Polish & cross-cutting concerns
-   - All tasks must follow the strict checklist format (see Task Generation Rules below)
-   - Clear file paths for each task
-   - Dependencies section showing story completion order
-   - Parallel execution examples per story
-   - Implementation strategy section (MVP first, incremental delivery)
+3. **Build the phase + task graph**:
+   - Phase 1 → Setup (project init, infrastructure scaffolding)
+   - Phase 2 → Foundational (blocking prerequisites — types, theme, routing, auth skeleton)
+   - Phase 3+ → One phase per user story in priority order (P1 → Phase 3, P2 → Phase 4, ...). Set the phase's `user_story_ordinal` so the schema can join phase→story.
+   - Final phase → Polish & cross-cutting concerns
+   - For each task, decide: `code` (T001, T002, ...), `description` (must include the file path), `parallelizable` (no in-phase blockers), `notes` (optional rationale), `phase_ordinal`.
+   - For each task→task dependency that's not implied by phase order, add an entry to the `dependencies` array (e.g., `{task: 'T029', depends_on: 'T022'}`).
 
-5. **Report**: Output path to generated tasks.md and summary:
-   - Total task count
-   - Task count per user story
-   - Parallel opportunities identified
-   - Independent test criteria for each story
-   - Suggested MVP scope (typically just User Story 1)
-   - Format validation: Confirm ALL tasks follow the checklist format (checkbox, ID, labels, file paths)
+4. **Write the tasks** in one call:
+   ```
+   mcp__specs-mcp__set_tasks(
+     feature='<slug>',
+     phases=[
+       {ordinal: 1, name: 'Setup', purpose: '...', user_story_ordinal: null},
+       {ordinal: 2, name: 'Foundational', purpose: '...', user_story_ordinal: null},
+       {ordinal: 3, name: 'US1', purpose: '...', user_story_ordinal: 1},
+       {ordinal: 4, name: 'US2', purpose: '...', user_story_ordinal: 2},
+       ...
+       {ordinal: <N>, name: 'Polish', purpose: '...', user_story_ordinal: null},
+     ],
+     tasks=[
+       {code: 'T001', description: 'Create project structure per implementation plan',
+        phase_ordinal: 1, parallelizable: false, status: 'pending'},
+       {code: 'T002', description: '[P] Initialize backend skeleton at backend/app/',
+        phase_ordinal: 1, parallelizable: true, status: 'pending'},
+       {code: 'T012', description: '[P] [US1] Create Bill model in frontend/lib/state/bill_state.dart',
+        phase_ordinal: 3, parallelizable: true, status: 'pending'},
+       ...
+     ],
+     dependencies=[
+       {task: 'T029', depends_on: 'T022'},
+       {task: 'T030', depends_on: 'T013'},
+       {task: 'T030', depends_on: 'T014'},
+       ...
+     ]
+   )
+   ```
+
+5. **Validate the graph**:
+   - Run `mcp__specs-mcp__next_tasks(feature=<slug>)` — should return the Setup tasks (the only ones with no deps). If it returns nothing, there's a cycle or an isolation issue; fix it.
+   - Run `mcp__specs-mcp__list_tasks(feature=<slug>, status='pending')` and count tasks per phase. Confirm every user_story has at least one task in its phase.
+
+6. **Report**:
+   - Counts: `phases`, `tasks`, `dependencies`.
+   - Tasks per user story (e.g., "US1: 12 tasks, US2: 3 tasks").
+   - Parallel opportunities (tasks with `parallelizable=true`).
+   - MVP suggestion (typically through end of US1's phase).
+   - Suggested next command: `/speckit-implement`.
 
 6. **Check for extension hooks**: After tasks.md is generated, check if `.specify/extensions.yml` exists in the project root.
    - If it exists, read it and look for entries under the `hooks.after_tasks` key
@@ -127,70 +159,57 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 Context for task generation: $ARGUMENTS
 
-The tasks.md should be immediately executable - each task must be specific enough that an LLM can complete it without additional context.
+Every task must be specific enough that an LLM can complete it without additional context. File paths belong in `task.description` (the DB schema doesn't have a separate file column — the path is part of the description text).
 
 ## Task Generation Rules
 
-**CRITICAL**: Tasks MUST be organized by user story to enable independent implementation and testing.
+**CRITICAL**: Tasks MUST be organized by user story (via `phase.user_story_ordinal`) to enable independent implementation and testing.
 
-**Tests are OPTIONAL**: Only generate test tasks if explicitly requested in the feature specification or if user requests TDD approach.
+**Tests are OPTIONAL**: Only generate test tasks if explicitly requested in the feature specification or if user requests TDD approach. (Note: the Bill Splitter constitution Principle II makes TDD mandatory — so for this project, tests ARE required.)
 
-### Checklist Format (REQUIRED)
+### Task Row Shape
 
-Every task MUST strictly follow this format:
+Each `task` row passed to `set_tasks` MUST carry:
 
-```text
-- [ ] [TaskID] [P?] [Story?] Description with file path
-```
+| field | rules |
+|---|---|
+| `code` | `T001`, `T002`, ... — sequential, zero-padded to 3 digits. Unique per feature. |
+| `description` | Clear action **with exact file path embedded**. Story label prefix `[US1]` etc. is OPTIONAL since the phase already carries `user_story_ordinal`; the convention is to include it for readability. |
+| `phase_ordinal` | Maps the task to its phase (1=Setup, 2=Foundational, 3+=user-story phases, final=Polish). |
+| `parallelizable` | `true` if task has no in-phase blockers (different files, doesn't read in-progress output). `false` otherwise. |
+| `status` | `'pending'` for new tasks (the schema default; safe to omit). |
+| `notes` | Optional. Trailing rationale ("**N/A**: ..." / "rejected by user ..."). |
 
-**Format Components**:
+**Examples of good descriptions**:
 
-1. **Checkbox**: ALWAYS start with `- [ ]` (markdown checkbox)
-2. **Task ID**: Sequential number (T001, T002, T003...) in execution order
-3. **[P] marker**: Include ONLY if task is parallelizable (different files, no dependencies on incomplete tasks)
-4. **[Story] label**: REQUIRED for user story phase tasks only
-   - Format: [US1], [US2], [US3], etc. (maps to user stories from spec.md)
-   - Setup phase: NO story label
-   - Foundational phase: NO story label  
-   - User Story phases: MUST have story label
-   - Polish phase: NO story label
-5. **Description**: Clear action with exact file path
-
-**Examples**:
-
-- ✅ CORRECT: `- [ ] T001 Create project structure per implementation plan`
-- ✅ CORRECT: `- [ ] T005 [P] Implement authentication middleware in src/middleware/auth.py`
-- ✅ CORRECT: `- [ ] T012 [P] [US1] Create User model in src/models/user.py`
-- ✅ CORRECT: `- [ ] T014 [US1] Implement UserService in src/services/user_service.py`
-- ❌ WRONG: `- [ ] Create User model` (missing ID and Story label)
-- ❌ WRONG: `T001 [US1] Create model` (missing checkbox)
-- ❌ WRONG: `- [ ] [US1] Create User model` (missing Task ID)
-- ❌ WRONG: `- [ ] T001 [US1] Create model` (missing file path)
+- `T001`: `Create project structure per implementation plan`
+- `T005`: `Implement authentication middleware in src/middleware/auth.py` (with `parallelizable=true`)
+- `T012`: `[US1] Create User model in src/models/user.py` (with `parallelizable=true`)
+- `T014`: `[US1] Implement UserService in src/services/user_service.py`
 
 ### Task Organization
 
-1. **From User Stories (spec.md)** - PRIMARY ORGANIZATION:
-   - Each user story (P1, P2, P3...) gets its own phase
+1. **From User Stories** (read via `get_feature(...)['user_stories']`) — PRIMARY ORGANIZATION:
+   - Each user story (P1, P2, P3...) gets its own phase, linked via `phase.user_story_ordinal`.
    - Map all related components to their story:
-     - Models needed for that story
-     - Services needed for that story
-     - Interfaces/UI needed for that story
-     - If tests requested: Tests specific to that story
-   - Mark story dependencies (most stories should be independent)
+     - Models / state for that story
+     - Services for that story
+     - UI screens / widgets for that story
+     - Tests specific to that story (constitution mandates them)
+   - Most stories should be independent; record real cross-story dependencies in the `dependencies` array.
 
-2. **From Contracts**:
-   - Map each interface contract → to the user story it serves
-   - If tests requested: Each interface contract → contract test task [P] before implementation in that story's phase
+2. **From API endpoints** (read via `get_feature(...)['api_endpoints']`):
+   - Each endpoint → contract test task (per Principle II) before the implementation task, in the relevant story's phase.
 
-3. **From Data Model**:
-   - Map each entity to the user story(ies) that need it
-   - If entity serves multiple stories: Put in earliest story or Setup phase
-   - Relationships → service layer tasks in appropriate story phase
+3. **From `plan.data_model`** (read via `get_feature(...)['plan']['data_model']`):
+   - Each entity → a "create model" task in the story phase that first needs it.
+   - If an entity serves multiple stories, hoist its creation into Setup or Foundational.
+   - Validation rules → service-layer tasks in the appropriate story phase.
 
-4. **From Setup/Infrastructure**:
-   - Shared infrastructure → Setup phase (Phase 1)
-   - Foundational/blocking tasks → Foundational phase (Phase 2)
-   - Story-specific setup → within that story's phase
+4. **From Setup / Infrastructure** (read via `plan.technical_context`, `plan.project_structure`):
+   - Shared infrastructure → Setup phase (Phase 1).
+   - Foundational/blocking tasks (theme, routing, auth skeleton, type definitions) → Foundational phase (Phase 2).
+   - Story-specific setup → within that story's phase.
 
 ### Phase Structure
 
