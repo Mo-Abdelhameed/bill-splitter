@@ -1,37 +1,22 @@
-"""Pydantic models for the /v1/extract endpoint.
-
-Schema mirrors `specs/001-bill-split-flow/contracts/backend-api-v1.md`.
-"""
 from __future__ import annotations
 
-from typing import Literal
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, NonNegativeFloat
 
 
-class ExtractedItem(BaseModel):
-    name: str = Field(..., min_length=1)
-    price: float = Field(..., ge=0)
+class ReceiptItem(BaseModel):
+    name: str
+    price: NonNegativeFloat
+    quantity: int = Field(default=1, ge=1)
 
 
-class ExtractionResponse(BaseModel):
-    items: list[ExtractedItem]
-    tax: float | None = None
-    service: float | None = None
+class ReceiptCharges(BaseModel):
+    tax: NonNegativeFloat | None = None
+    service: NonNegativeFloat | None = None
 
 
-ErrorCode = Literal[
-    "bad_image",
-    "unauthorized",
-    "image_too_large",
-    "network",
-    "http",
-    "parse",
-    "schema",
-    "empty",
-]
-
-
-class ErrorResponse(BaseModel):
-    error: ErrorCode
-    message: str
+class ExtractedReceipt(BaseModel):
+    items: list[ReceiptItem] = Field(default_factory=list)
+    charges: ReceiptCharges = Field(default_factory=ReceiptCharges)
+    subtotal: NonNegativeFloat | None = None
+    total: NonNegativeFloat | None = None
+    currency: str | None = None
